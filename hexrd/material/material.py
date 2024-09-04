@@ -36,11 +36,8 @@ import numpy as np
 
 from hexrd.material.crystallography import PlaneData as PData
 from hexrd.material import symmetry, unitcell
-from hexrd.material.symbols import two_origin_choice
 from hexrd.valunits import valWUnit
-from hexrd.constants import (ptable,
-                             ptableinverse,
-                             chargestate)
+from hexrd.constants import ptable, ptableinverse, chargestate
 
 from os import path
 from pathlib import Path
@@ -79,12 +76,6 @@ def _kev(x):
 def _key(x):
     return x.name
 
-
-def get_default_sgsetting(sgnum):
-    if sgnum in two_origin_choice:
-        return 1
-    else:
-        return 0
 
 #
 # ---------------------------------------------------CLASS:  Material
@@ -157,7 +148,7 @@ class Material(object):
         material_file=None,
         dmin=None,
         kev=None,
-        sgsetting=None,
+        sgsetting=DFLT_SGSETTING,
     ):
         """Constructor for Material
 
@@ -174,6 +165,8 @@ class Material(object):
 
         self.description = ''
 
+        self.sgsetting = sgsetting
+
         if material_file:
             # >> @ date 08/20/2020 SS removing dependence on hklmax
             if isinstance(material_file, (Path, str)):
@@ -187,9 +180,6 @@ class Material(object):
                 self._readCif(material_file)
             elif isinstance(material_file, h5py.Group) or form in h5_suffixes:
                 self._readHDFxtal(fhdf=material_file, xtal=name)
-            if sgsetting is not None:
-                if sgsetting in [0, 1]:
-                    self._sgsetting = sgsetting
         else:
             # default name
             self._name = Material.DFLT_XTAL
@@ -199,8 +189,8 @@ class Material(object):
             #
             self.description = ''
             #
-            self._sgsetting = Material.DFLT_SGSETTING
             self.sgnum = Material.DFLT_SGNUM
+            self._sgsetting = Material.DFLT_SGSETTING
             #
             self._atominfo = Material.DFLT_ATOMINFO
             #
@@ -243,6 +233,7 @@ class Material(object):
         s = 'Material:  %s\n' % self.name
         if self.description:
             s += '   description:  %s\n' % self.description
+            pass
         s += '   plane Data:  %s' % str(self.planeData)
         return s
 
@@ -655,7 +646,6 @@ class Material(object):
                 lparms[i] = _degrees(lparms[i])
 
         self._lparms = lparms
-        self._sgsetting = get_default_sgsetting(sgnum)
         self.sgnum = sgnum
 
         # fractional atomic site, occ and vibration amplitude
@@ -729,10 +719,7 @@ class Material(object):
 
             chkstr = np.asarray([isinstance(x, str) for x in occ])
             occstr = np.array(occ)
-            try:
-                occstr = occstr.astype(np.float64)
-            except:
-                occstr[chkstr] = 1.0
+            occstr[chkstr] = 1.0
 
             atompos.append(np.asarray(occstr).astype(np.float64))
 
@@ -806,6 +793,7 @@ class Material(object):
 
         self._atomtype = np.asarray(atomtype).astype(np.int32)
         self._charge = charge
+        self._sgsetting = 0
 
         self._dmin = Material.DFLT_DMIN
         self._beamEnergy = Material.DFLT_KEV
@@ -874,9 +862,6 @@ class Material(object):
         self._lparms = lparms
 
         # fill space group and lattice parameters
-        self._sgsetting = np.array(
-            gid.get('SpaceGroupSetting'), dtype=np.int32
-        ).item()
         self.sgnum = sgnum
 
         # the U factors are related to B by the relation B = 8pi^2 U
@@ -892,6 +877,10 @@ class Material(object):
         else:
             self._charge = ['0'] * self._atomtype.shape[0]
         self._atom_ntype = self._atomtype.shape[0]
+
+        self._sgsetting = np.array(
+            gid.get('SpaceGroupSetting'), dtype=np.int32
+        ).item()
 
         if 'stiffness' in gid:
             # we're assuming the stiffness is in units of GPa
@@ -1411,6 +1400,12 @@ class Material(object):
         self._newUnitcell()
         self.invalidate_structure_factor()
 
+    #
+    #  ========== Methods
+    #
+    #
+    pass  # end class
+
 
 #
 #  -----------------------------------------------END CLASS:  Material
@@ -1437,7 +1432,8 @@ def loadMaterialList(cfgFile):
 
 
 def load_materials_hdf5(
-        f, dmin=None, kev=None):
+    f, dmin=None, kev=None, sgsetting=Material.DFLT_SGSETTING
+):
     """Load materials from an HDF5 file
 
     The file uses the HDF5 file format.
@@ -1460,6 +1456,7 @@ def load_materials_hdf5(
         'material_file': f,
         'dmin': dmin,
         'kev': kev,
+        'sgsetting': sgsetting,
     }
     return {name: Material(name, **kwargs) for name in names}
 
@@ -1509,6 +1506,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         print("need argument:  materials.cfg")
         sys.exit()
+        pass
 
     ml = loadMaterialList(sys.argv[1])
 
@@ -1516,3 +1514,5 @@ if __name__ == '__main__':
     print(('   from file:  ', sys.argv[1]))
     for m in ml:
         print(m)
+        pass
+    pass

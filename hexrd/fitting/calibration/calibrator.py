@@ -8,7 +8,7 @@ class Calibrator(ABC):
     @abstractmethod
     def type(self):
         """The type of the calibrator"""
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def create_lmfit_params(self, current_params):
@@ -25,7 +25,7 @@ class Calibrator(ABC):
         for the lattice parameters. The Laue calibrator creates lmfit
         parameters for crystal parameters.
         """
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def update_from_lmfit_params(self, params_dict):
@@ -38,7 +38,7 @@ class Calibrator(ABC):
         For example, the powder calibrator will update the lattice parameters
         on the material. The Laue calibrator will update crystal parameters.
         """
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def residual(self, calibration_data=None):
@@ -48,7 +48,7 @@ class Calibrator(ABC):
         the calibration class instead, in which case, calibration_data can
         be `None`.
         """
-        raise NotImplementedError
+        pass
 
     @property
     @abstractmethod
@@ -73,10 +73,10 @@ class Calibrator(ABC):
         string of the hkl. And "picks" are either a list of points (powder)
         or a single point (laue). The picks are in cartesian coordinates.
         """
-        raise NotImplementedError
+        pass
 
     @calibration_picks.setter
     @abstractmethod
     def calibration_picks(self, val):
         """Setter for calibration_picks. See getter docs for details."""
-        raise NotImplementedError
+        pass

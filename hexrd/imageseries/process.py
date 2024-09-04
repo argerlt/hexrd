@@ -146,3 +146,5 @@ class ProcessedImageSeries(ImageSeries):
     def oplist(self):
         """list of operations to apply"""
         return self._oplist
+
+    pass  # end class

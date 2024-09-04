@@ -47,6 +47,7 @@ try:
     logging.info(f'{rank=} {world_size=} {hostname=}')
 except ImportError:
     logging.warning(f'mpi4py failed to load on {hostname=}. MPI is disabled.')
+    pass
 
 
 # Import of image loading, this should probably be done properly with preprocessed frame-cache binaries
@@ -60,12 +61,15 @@ except(ImportError):
     from skimage import io as imgio
 
 
+
+
+
 def load_instrument(yml):
     with open(yml, 'r') as f:
         icfg = yaml.load(f, Loader=yaml.FullLoader)
     return instrument.HEDMInstrument(instrument_config=icfg)
 
-# %%
+#%%
 
 
 beam = constants.beam_vec
@@ -261,6 +265,7 @@ def checking_result_handler(filename):
                 logging.error(msg, locals())
 
     return CheckingResultHandler(filename)
+
 
 
 # =============================================================================
@@ -528,19 +533,16 @@ def simulate_diffractions(grain_params, experiment, controller):
 
     controller.start(subprocess, count)
     for i in range(count):
-        rC = xfcapi.make_rmat_of_expmap(grain_params[i][0:3])
+        rC = xfcapi.makeRotMatOfExpMap(grain_params[i][0:3])
         tC = np.ascontiguousarray(grain_params[i][3:6])
         vInv_s = np.ascontiguousarray(grain_params[i][6:12])
-        ang_list = np.vstack(
-            xfcapi.oscill_angles_of_hkls(
-                full_hkls[:, 1:], chi, rC, bMat, wlen, v_inv=vInv_s
-            )
-        )
+        ang_list = np.vstack(xfcapi.oscillAnglesOfHKLs(full_hkls[:, 1:], chi,
+                                                       rC, bMat, wlen,
+                                                       vInv=vInv_s))
         # hkls not needed here
-        all_angs, _ = xrdutil._filter_hkls_eta_ome(
-            full_hkls, ang_list, eta_range, ome_range
-        )
-        all_angs[:, 2] = rotations.mapAngle(all_angs[:, 2], ome_period)
+        all_angs, _ = xrdutil._filter_hkls_eta_ome(full_hkls, ang_list,
+                                                   eta_range, ome_range)
+        all_angs[:, 2] = xfcapi.mapAngle(all_angs[:, 2], ome_period)
 
         proj_pts =  _project(all_angs, rD, rC, chi, tD,
                              tC, tS, distortion)
@@ -807,6 +809,7 @@ def evaluate_diffraction_angles(experiment, controller=None):
                                             distortion=None)
         all_angles.append(sim_results[2])
         controller.update(i + 1)
+        pass
     controller.finish(subprocess)
 
     return all_angles
@@ -1013,7 +1016,7 @@ def grand_loop_pool(ncpus, state):
             shutil.rmtree(tmp_dir)
 
 
-# %% Test Grid Generation
+#%% Test Grid Generation
 
 
 def gen_nf_test_grid(cross_sectional_dim, v_bnds, voxel_spacing):
@@ -1037,6 +1040,7 @@ def gen_nf_test_grid(cross_sectional_dim, v_bnds, voxel_spacing):
     return test_crds, n_crds, Xs, Ys, Zs
 
 
+
 def gen_nf_test_grid_tomo(x_dim_pnts, z_dim_pnts, v_bnds, voxel_spacing):
 
     if v_bnds[0]==v_bnds[1]:
@@ -1056,7 +1060,9 @@ def gen_nf_test_grid_tomo(x_dim_pnts, z_dim_pnts, v_bnds, voxel_spacing):
     return test_crds, n_crds, Xs, Ys, Zs
 
 
-# %%
+
+
+#%%
 
 def gen_nf_dark(data_folder,img_nums,num_for_dark,nrows,ncols,dark_type='median',stem='nf_',num_digits=5,ext='.tif'):
 
@@ -1078,7 +1084,7 @@ def gen_nf_dark(data_folder,img_nums,num_for_dark,nrows,ncols,dark_type='median'
     return dark
 
 
-# %%
+#%%
 
 
 def gen_nf_cleaned_image_stack(data_folder,img_nums,dark,nrows,ncols, \
@@ -1128,7 +1134,9 @@ def gen_nf_cleaned_image_stack(data_folder,img_nums,dark,nrows,ncols, \
     return image_stack
 
 
-# %%
+
+
+#%%
 
 
 def gen_trial_exp_data(grain_out_file,det_file,mat_file, mat_name, max_tth, comp_thresh, chi2_thresh, misorientation_bnd, \
@@ -1345,14 +1353,14 @@ def process_raw_confidence(raw_confidence,vol_shape=None,id_remap=None,min_thres
     return grain_map.astype(int), confidence_map
 
 
-# %%
+#%%
 def save_raw_confidence(save_dir,save_stem,raw_confidence,id_remap=None):
     print('Saving raw confidence, might take a while...')
     if id_remap is not None:
         np.savez(save_dir+save_stem+'_raw_confidence.npz',raw_confidence=raw_confidence,id_remap=id_remap)
     else:
         np.savez(save_dir+save_stem+'_raw_confidence.npz',raw_confidence=raw_confidence)
-# %%
+#%%
 
 def save_nf_data(save_dir,save_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,id_remap=None):
     print('Saving grain map data...')
@@ -1362,25 +1370,26 @@ def save_nf_data(save_dir,save_stem,grain_map,confidence_map,Xs,Ys,Zs,ori_list,i
         np.savez(save_dir+save_stem+'_grain_map_data.npz',grain_map=grain_map,confidence_map=confidence_map,Xs=Xs,Ys=Ys,Zs=Zs,ori_list=ori_list)
 
 
-# %%
+
+#%%
 
 def scan_detector_parm(image_stack, experiment,test_crds,controller,parm_to_opt,parm_range,slice_shape,ang='deg'):
-    # 0-distance
-    # 1-x center
-    # 2-y center
-    # 3-xtilt
-    # 4-ytilt
-    # 5-ztilt
+    #0-distance
+    #1-x center
+    #2-y center
+    #3-xtilt
+    #4-ytilt
+    #5-ztilt
 
     parm_vector=np.arange(parm_range[0],parm_range[1]+1e-6,(parm_range[1]-parm_range[0])/parm_range[2])
+
 
     if parm_to_opt>2 and ang=='deg':
         parm_vector=parm_vector*np.pi/180.
 
     multiprocessing_start_method = 'fork' if hasattr(os, 'fork') else 'spawn'
 
-    # current detector parameters, note the value for the actively optimized
-    # parameters will be ignored
+    #current detector parameters, note the value for the actively optimized parameters will be ignored
     distance=experiment.detector_params[5]#mm
     x_cen=experiment.detector_params[3]#mm
     y_cen=experiment.detector_params[4]#mm
@@ -1399,7 +1408,8 @@ def scan_detector_parm(image_stack, experiment,test_crds,controller,parm_to_opt,
     for jj in np.arange(num_parm_pts):
         print('cycle %d of %d'%(jj+1,num_parm_pts))
 
-        # overwrite translation vector components
+
+        #overwrite translation vector components
         if parm_to_opt==0:
             tmp_td[2]=parm_vector[jj]
 
@@ -1409,38 +1419,29 @@ def scan_detector_parm(image_stack, experiment,test_crds,controller,parm_to_opt,
         if parm_to_opt==2:
             tmp_td[1]=parm_vector[jj]
 
-        if parm_to_opt == 3:
-            rMat_d_tmp = xfcapi.make_detector_rmat(
-                [parm_vector[jj], ytilt, ztilt]
-            )
-        elif parm_to_opt == 4:
-            rMat_d_tmp = xfcapi.make_detector_rmat(
-                [xtilt, parm_vector[jj], ztilt]
-            )
-        elif parm_to_opt == 5:
-            rMat_d_tmp = xfcapi.make_detector_rmat(
-                [xtilt, ytilt, parm_vector[jj]]
-            )
+
+
+
+        if  parm_to_opt==3:
+            rMat_d_tmp=xfcapi.makeDetectorRotMat([parm_vector[jj],ytilt,ztilt])
+        elif parm_to_opt==4:
+            rMat_d_tmp=xfcapi.makeDetectorRotMat([xtilt,parm_vector[jj],ztilt])
+        elif parm_to_opt==5:
+            rMat_d_tmp=xfcapi.makeDetectorRotMat([xtilt,ytilt,parm_vector[jj]])
         else:
-            rMat_d_tmp = xfcapi.make_detector_rmat([xtilt, ytilt, ztilt])
+            rMat_d_tmp=xfcapi.makeDetectorRotMat([xtilt,ytilt,ztilt])
 
         experiment.rMat_d = rMat_d_tmp
         experiment.tVec_d = tmp_td
 
         if parm_to_opt==6:
 
-            experiment.ome_range = [
-                (
-                    ome_range[0][0] - parm_vector[jj],
-                    ome_range[0][1] - parm_vector[jj],
-                )
-            ]
-            experiment.ome_period = (
-                ome_period[0] - parm_vector[jj],
-                ome_period[1] - parm_vector[jj],
-            )
-            experiment.ome_edges = np.array(ome_edges - parm_vector[jj])
-            experiment.base[2] = experiment.ome_edges[0]
+
+
+            experiment.ome_range=[(ome_range[0][0]-parm_vector[jj],ome_range[0][1]-parm_vector[jj])]
+            experiment.ome_period=(ome_period[0]-parm_vector[jj],ome_period[1]-parm_vector[jj])
+            experiment.ome_edges=np.array(ome_edges-parm_vector[jj])
+            experiment.base[2]=experiment.ome_edges[0]
 
             # print(experiment.ome_range)
             # print(experiment.ome_period)
@@ -1450,11 +1451,12 @@ def scan_detector_parm(image_stack, experiment,test_crds,controller,parm_to_opt,
         conf=test_orientations(image_stack, experiment,test_crds,controller, \
                                multiprocessing_start_method)
 
+
         trial_data[jj]=np.max(conf,axis=0).reshape(slice_shape)
 
     return trial_data, parm_vector
 
-# %%
+#%%
 
 def plot_ori_map(grain_map, confidence_map, exp_maps, layer_no,mat,id_remap=None):
 
@@ -1475,7 +1477,7 @@ def plot_ori_map(grain_map, confidence_map, exp_maps, layer_no,mat,id_remap=None
 
             ori = exp_maps[ii, :]
 
-            rmats = rotations.rotMatOfExpMap(ori)
+            rmats = rot.rotMatOfExpMap(ori)
             rgb = mat.unitcell.color_orientations(
                 rmats, ref_dir=np.array([0., 1., 0.]))
 
@@ -1489,9 +1491,9 @@ def plot_ori_map(grain_map, confidence_map, exp_maps, layer_no,mat,id_remap=None
     fig1 = plt.figure()
     plt.imshow(rgb_image, interpolation='none')
     plt.title('Layer %d Grain Map' % layer_no)
-    #plt.show()
-    plt.hold(True)
-    #fig2 = plt.figure()
+    plt.show()
+    #plt.hold(True)
+    fig2 = plt.figure()
     plt.imshow(conf_plot, vmin=0.0, vmax=1.,
                interpolation='none', cmap=plt.cm.gray, alpha=0.5)
     plt.title('Layer %d Confidence Map' % layer_no)
@@ -1734,6 +1736,7 @@ def output_grain_map(data_location,data_stems,output_stem,vol_spacing,top_down=T
 
     return grain_map_stitched, confidence_stitched, Xs_stitched, Ys_stitched, \
             Zs_stitched
+
 
 
 # # assume that if os has fork, it will be used by multiprocessing.

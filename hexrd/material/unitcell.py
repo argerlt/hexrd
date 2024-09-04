@@ -1,6 +1,5 @@
 import importlib.resources
 import numpy as np
-from numba import njit
 from hexrd import constants
 from hexrd.material import spacegroup, symbols, symmetry
 from hexrd.ipfcolor import sphere_sector, colorspace
@@ -11,6 +10,8 @@ import h5py
 from pathlib import Path
 from scipy.interpolate import interp1d
 import time
+
+from hexrd.utils.decorators import numba_njit_if_available
 
 eps = constants.sqrt_epsf
 ENERGY_ID = 0
@@ -24,12 +25,12 @@ WAV_ID = 7
 ''' calculate dot product of two vectors in any space 'd' 'r' or 'c' '''
 
 
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def _calclength(u, mat):
     return np.sqrt(np.dot(u, np.dot(mat, u)))
 
 
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def _calcstar(v, sym, mat):
     vsym = np.atleast_2d(v)
     for s in sym:
@@ -42,7 +43,7 @@ def _calcstar(v, sym, mat):
             if dist < 1E-3:
                 isnew = False
                 break
-        if isnew:
+        if(isnew):
             vp = np.atleast_2d(vp)
             vsym = np.vstack((vsym, vp))
 
@@ -120,6 +121,7 @@ class unitcell:
             constants.cCharge / \
             self.voltage
         self.wavelength *= 1e9
+        # self.CalcAnomalous()
 
     def calcBetaij(self):
 
@@ -158,7 +160,7 @@ class unitcell:
                               [a*c*cb, b*c*ca, c**2]])
         self._vol = np.sqrt(np.linalg.det(self.dmt))
 
-        if self.vol < 1e-5:
+        if(self.vol < 1e-5):
             warnings.warn('unitcell volume is suspiciously small')
 
         '''
@@ -198,34 +200,32 @@ class unitcell:
         choices are 'd' (direct), 'r' (reciprocal) and 'c' (cartesian)'''
 
     def TransSpace(self, v_in, inspace, outspace):
-        if inspace == outspace:
-            return v_in
-        if inspace == 'd':
-            if outspace == 'r':
+        if(inspace == 'd'):
+            if(outspace == 'r'):
                 v_out = np.dot(v_in, self.dmt)
-            elif outspace == 'c':
+            elif(outspace == 'c'):
                 v_out = np.dot(self.dsm, v_in)
             else:
                 raise ValueError(
-                    'inspace in "d" but outspace can\'t be identified')
+                    'inspace in ''d'' but outspace can''t be identified')
 
-        elif inspace == 'r':
-            if outspace == 'd':
+        elif(inspace == 'r'):
+            if(outspace == 'd'):
                 v_out = np.dot(v_in, self.rmt)
-            elif outspace == 'c':
+            elif(outspace == 'c'):
                 v_out = np.dot(self.rsm, v_in)
             else:
                 raise ValueError(
-                    'inspace in "r" but outspace can\'t be identified')
+                    'inspace in ''r'' but outspace can''t be identified')
 
-        elif inspace == 'c':
-            if outspace == 'r':
-                v_out = np.dot(v_in, self.dsm)
-            elif outspace == 'd':
+        elif(inspace == 'c'):
+            if(outspace == 'r'):
                 v_out = np.dot(v_in, self.rsm)
+            elif(outspace == 'd'):
+                v_out = np.dot(v_in, self.dsm)
             else:
                 raise ValueError(
-                    'inspace in "c" but outspace can\'t be identified')
+                    'inspace in ''c'' but outspace can''t be identified')
 
         else:
             raise ValueError('incorrect inspace argument')
@@ -236,11 +236,11 @@ class unitcell:
 
     def CalcDot(self, u, v, space):
 
-        if space == 'd':
+        if(space == 'd'):
             dot = np.dot(u, np.dot(self.dmt, v))
-        elif space == 'r':
+        elif(space == 'r'):
             dot = np.dot(u, np.dot(self.rmt, v))
-        elif space == 'c':
+        elif(space == 'c'):
             dot = np.dot(u, v)
         else:
             raise ValueError('space is unidentified')
@@ -249,13 +249,13 @@ class unitcell:
 
     def CalcLength(self, u, space):
 
-        if space == 'd':
+        if(space == 'd'):
             mat = self.dmt
             # vlen = np.sqrt(np.dot(u, np.dot(self.dmt, u)))
-        elif space == 'r':
+        elif(space == 'r'):
             mat = self.rmt
             # vlen = np.sqrt(np.dot(u, np.dot(self.rmt, u)))
-        elif space == 'c':
+        elif(space == 'c'):
             mat = np.eye(3)
             # vlen = np.linalg.norm(u)
         else:
@@ -299,7 +299,7 @@ class unitcell:
 
     def CalcCross(self, p, q, inspace, outspace, vol_divide=False):
         iv = 0
-        if vol_divide:
+        if(vol_divide):
             vol = self.vol
         else:
             vol = 1.0
@@ -308,50 +308,50 @@ class unitcell:
                         p[2]*q[0]-p[0]*q[2],
                         p[0]*q[1]-p[1]*q[0]])
 
-        if inspace == 'd':
+        if(inspace == 'd'):
             '''
             cross product vector is in reciprocal space
             and can be converted to direct or cartesian space
             '''
             pxq *= vol
 
-            if outspace == 'r':
+            if(outspace == 'r'):
                 pass
-            elif outspace == 'd':
+            elif(outspace == 'd'):
                 pxq = self.TransSpace(pxq, 'r', 'd')
-            elif outspace == 'c':
+            elif(outspace == 'c'):
                 pxq = self.TransSpace(pxq, 'r', 'c')
             else:
                 raise ValueError(
                     'inspace is ''d'' but outspace is unidentified')
 
-        elif inspace == 'r':
+        elif(inspace == 'r'):
             '''
             cross product vector is in direct space and
             can be converted to any other space
             '''
             pxq /= vol
-            if outspace == 'r':
+            if(outspace == 'r'):
                 pxq = self.TransSpace(pxq, 'd', 'r')
-            elif outspace == 'd':
+            elif(outspace == 'd'):
                 pass
-            elif outspace == 'c':
+            elif(outspace == 'c'):
                 pxq = self.TransSpace(pxq, 'd', 'c')
             else:
                 raise ValueError(
                     'inspace is ''r'' but outspace is unidentified')
 
-        elif inspace == 'c':
+        elif(inspace == 'c'):
             '''
             cross product is already in cartesian space so no
             volume factor is involved. can be converted to any
             other space too
             '''
-            if outspace == 'r':
+            if(outspace == 'r'):
                 pxq = self.TransSpace(pxq, 'c', 'r')
-            elif outspace == 'd':
+            elif(outspace == 'd'):
                 pxq = self.TransSpace(pxq, 'c', 'd')
-            elif outspace == 'c':
+            elif(outspace == 'c'):
                 pass
             else:
                 raise ValueError(
@@ -400,7 +400,7 @@ class unitcell:
         self.SYM_PG_c = np.array(self.SYM_PG_c)
         self.SYM_PG_c[np.abs(self.SYM_PG_c) < eps] = 0.
 
-        if self._pointGroup == self._laueGroup:
+        if(self._pointGroup == self._laueGroup):
             self.SYM_PG_c_laue = self.SYM_PG_c
         else:
             for sop in self.SYM_PG_d_laue:
@@ -424,7 +424,8 @@ class unitcell:
         supergroup_laue = self._supergroup_laue
         sym_supergroup_laue = symmetry.GeneratePGSYM(supergroup_laue)
 
-        if self.latticeType in ('monoclinic', 'triclinic'):
+        if((self.latticeType == 'monoclinic' or
+                self.latticeType == 'triclinic')):
             '''
             for monoclinic groups c2 and c2h, the supergroups are
             orthorhombic, so no need to convert from direct to
@@ -463,7 +464,7 @@ class unitcell:
         not be rotated as they have the c* axis already aligned with the z-axis
         SS 12/10/2020
         '''
-        if self.latticeType == 'monoclinic':
+        if(self.latticeType == 'monoclinic'):
 
             om = np.array([[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]])
 
@@ -481,7 +482,7 @@ class unitcell:
         triclinic group c1!!
         SS 12/10/2020
         '''
-        if self._pointGroup == 'c1':
+        if(self._pointGroup == 'c1'):
             om = np.array([[1., 0., 0.], [0., 0., 1.], [0., -1., 0.]])
 
             for i, s in enumerate(self.SYM_PG_supergroup):
@@ -537,7 +538,7 @@ class unitcell:
                     break
 
             # if its new add this to the list
-            if isnew:
+            if(isnew):
                 asym_pos = np.vstack((asym_pos, rr))
                 n += 1
 
@@ -550,21 +551,21 @@ class unitcell:
         this function calculates the symmetrically equivalent hkls (or uvws)
         for the reciprocal (or direct) point group symmetry.
         '''
-        if space == 'd':
+        if(space == 'd'):
             mat = self.dmt.astype(np.float64)
-            if applyLaue:
+            if(applyLaue):
                 sym = self.SYM_PG_d_laue.astype(np.float64)
             else:
                 sym = self.SYM_PG_d.astype(np.float64)
-        elif space == 'r':
+        elif(space == 'r'):
             mat = self.rmt.astype(np.float64)
-            if applyLaue:
+            if(applyLaue):
                 sym = self.SYM_PG_r_laue.astype(np.float64)
             else:
                 sym = self.SYM_PG_r.astype(np.float64)
-        elif space == 'c':
+        elif(space == 'c'):
             mat = np.eye(3)
-            if applyLaue:
+            if(applyLaue):
                 sym = self.SYM_PG_c_laue.astype(np.float64)
             else:
                 sym = self.SYM_PG_c.astype(np.float64)
@@ -626,43 +627,39 @@ class unitcell:
         for i in range(atom_pos.shape[0]):
             pos = atom_pos[i, 0:3]
             occ = atom_pos[i, 3]
-            v1, n1 = self.CalcOrbit(pos)
             if i == 0:
                 atom_pos_fixed.append(np.hstack([pos, occ]))
                 idx.append(i)
-            else:
-                isclose = False
-                for j,  uniqpos in enumerate(atom_pos_fixed):
-                    pos2 = uniqpos[0:3]
-                    occ2 = uniqpos[3]
-                    # cases with fractional occupancy on same site
-                    if (np.all(np.isclose(pos, pos2)) and
-                            (occ+occ2 <= 1.)):
-                        atom_pos_fixed.append(np.hstack([pos, occ]))
-                        idx.append(i)
-                        isclose = True
-                        break
-                    else:
-                        v2, n2 = self.CalcOrbit(pos2)
-                        for v in v2:
-                            vv = np.tile(v, [v1.shape[0], 1])
-                            vv = vv - v1
+                v1, n1 = self.CalcOrbit(pos)
 
-                            for vvv in vv:
-                                # check if distance less than tol
-                                # the factor of 10 is for A --> nm
-                                if self.CalcLength(vvv, 'd') < tol/10.:
-                                    # if true then its a repeated atom
-                                    isclose = True
-                                    break
+                for j in range(i+1, atom_pos.shape[0]):
+                    isclose = False
+                    # atom_pos_fixed.append(np.hstack([pos, occ]))
+                    pos = atom_pos[j, 0:3]
+                    occ = atom_pos[j, 3]
+                    v2, n2 = self.CalcOrbit(pos)
+
+                    for v in v2:
+                        vv = np.tile(v, [v1.shape[0], 1])
+                        vv = vv - v1
+
+                        for vvv in vv:
+
+                            # check if distance less than tol
+                            # the factor of 10 is for A --> nm
+                            if self.CalcLength(vvv, 'd') < tol/10.:
+                                # if true then its a repeated atom
+                                isclose = True
+                                break
 
                         if isclose:
                             break
+
                     if isclose:
                         break
-                if not isclose:
-                    atom_pos_fixed.append(np.hstack([pos, occ]))
-                    idx.append(i)
+                    else:
+                        atom_pos_fixed.append(np.hstack([pos, occ]))
+                        idx.append(i)
 
         idx = np.array(idx)
         atom_pos_fixed = np.array(atom_pos_fixed)
@@ -683,6 +680,7 @@ class unitcell:
         initialize interpolation from table for anomalous scattering
         '''
         self.InitializeInterpTable()
+        # self.CalcAnomalous()
         self.CalcPositions()
         self.CalcDensity()
         self.calc_absorption_length()
@@ -751,11 +749,7 @@ class unitcell:
 
         f_anomalous_data = []
         self.pe_cs = {}
-        data = (
-            importlib.resources.files(hexrd.resources)
-            .joinpath('Anomalous.h5')
-            .open('rb')
-        )
+        data = importlib.resources.open_binary(hexrd.resources, 'Anomalous.h5')
         with h5py.File(data, 'r') as fid:
             for i in range(0, self.atom_ntype):
 
@@ -786,6 +780,54 @@ class unitcell:
             nd = f_anomalous_data[i].shape[0]
             self.f_anomalous_data_sizes[i] = nd
             self.f_anomalous_data[i, :nd, :] = f_anomalous_data[i]
+
+    def CalcAnomalous(self):
+
+        self.f_anam = {}
+        for i in range(self.atom_ntype):
+
+            Z = self.atom_type[i]
+            elem = constants.ptableinverse[Z]
+            f1 = self.f1[elem](self.wavelength)
+            f2 = self.f2[elem](self.wavelength)
+            frel = constants.frel[elem]
+            Z = constants.ptable[elem]
+            self.f_anam[elem] = complex(f1+frel-Z, f2)
+
+    def CalcXRFormFactor(self, Z, charge, s):
+        '''
+        we are using the following form factors for x-aray scattering:
+        1. coherent x-ray scattering, f0 tabulated in Acta Cryst. (1995). A51,416-431
+        2. Anomalous x-ray scattering (complex (f'+if")) tabulated in J. Phys. Chem. Ref. Data, 24, 71 (1995)
+        and J. Phys. Chem. Ref. Data, 29, 597 (2000).
+        3. Thompson nuclear scattering, fNT tabulated in Phys. Lett. B, 69, 281 (1977).
+
+        the anomalous scattering is a complex number (f' + if"), where the two terms are given by
+        f' = f1 + frel - Z
+        f" = f2
+
+        f1 and f2 have been tabulated as a function of energy in Anomalous.h5 in hexrd folder
+
+        overall f = (f0 + f' + if" +fNT)
+        '''
+        elem = constants.ptableinverse[Z]
+        if charge == '0':
+            sfact = constants.scatfac[elem]
+        else:
+            cs = f"{elem}{charge}"
+            if cs in constants.scatfac:
+                sfact = constants.scatfac[f"{elem}{charge}"]
+            else:
+                sfact = constants.scatfac[elem]
+        fe = sfact[5]
+        fNT = constants.fNT[elem]
+        frel = constants.frel[elem]
+        f_anomalous = self.f_anam[elem]
+
+        for i in range(5):
+            fe += sfact[i] * np.exp(-sfact[i+6]*s)
+
+        return (fe+fNT+f_anomalous)
 
     def CalcXRSF(self, hkl):
         from hexrd.wppf.xtal import _calcxrsf
@@ -922,7 +964,7 @@ class unitcell:
         laue = InversionSymmetry
 
         for i, g in enumerate(hkllist):
-            if mask[i]:
+            if(mask[i]):
 
                 geqv = self.CalcStar(g, 'r', applyLaue=laue)
 
@@ -1000,11 +1042,11 @@ class unitcell:
         for g in hkl_allowed:
 
             # ignore [0 0 0] as it is the direct beam
-            if np.sum(np.abs(g)) != 0:
+            if(np.sum(np.abs(g)) != 0):
 
                 dspace = 1./self.CalcLength(g, 'r')
 
-                if dspace >= dmin:
+                if(dspace >= dmin):
                     hkl_dsp.append(g)
 
         '''
@@ -1042,7 +1084,7 @@ class unitcell:
         return np.array([C[x] for x in _StiffnessDict[self._laueGroup][0]])
 
     def MakeStiffnessMatrix(self, inp_Cvals):
-        if len(inp_Cvals) != len(_StiffnessDict[self._laueGroup][0]):
+        if(len(inp_Cvals) != len(_StiffnessDict[self._laueGroup][0])):
             x = len(_StiffnessDict[self._laueGroup][0])
             msg = (f"number of constants entered is not correct."
                    f" need a total of {x} independent constants.")
@@ -1084,16 +1126,16 @@ class unitcell:
         first get vertices of the triangles in the
         '''
         vertex = self.sphere_sector.vertices[switch]
-        # if switch == 'pg':
+        # if(switch == 'pg'):
         #     vertex = self.sphere_sector.vertices
 
-        # elif switch == 'laue':
+        # elif(switch == 'laue'):
         #     vertex = self.sphere_sector.vertices_laue
 
-        # elif switch == 'super':
+        # elif(switch == 'super'):
         #     vertex = self.sphere_sector.vertices_supergroup
 
-        # elif switch == 'superlaue':
+        # elif(switch == 'superlaue'):
         #     vertex = self.sphere_sector.vertices_supergroup_laue
 
         A = np.atleast_2d(vertex[:, conn[0]]).T
@@ -1112,29 +1154,29 @@ class unitcell:
             determinant can be very small positive or negative
             number
             '''
-            if np.abs(d1) < eps:
+            if(np.abs(d1) < eps):
                 d1 = 0.
-            if np.abs(d2) < eps:
+            if(np.abs(d2) < eps):
                 d2 = 0.
-            if np.abs(d3) < eps:
+            if(np.abs(d3) < eps):
                 d3 = 0.
 
             ss = np.unique(np.sign([d1, d2, d3]))
-            if hemisphere == 'upper':
-                if np.all(ss >= 0.):
+            if(hemisphere == 'upper'):
+                if(np.all(ss >= 0.)):
                     mask.append(True)
                 else:
                     mask.append(False)
 
-            elif hemisphere == 'both':
-                if len(ss) == 1:
+            elif(hemisphere == 'both'):
+                if(len(ss) == 1):
                     mask.append(True)
-                elif len(ss) == 2:
-                    if 0 in ss:
+                elif(len(ss) == 2):
+                    if(0 in ss):
                         mask.append(True)
                     else:
                         mask.append(False)
-                elif len(ss) == 3:
+                elif(len(ss) == 3):
                     mask.append(False)
 
         mask = np.array(mask)
@@ -1166,7 +1208,7 @@ class unitcell:
         '''
         idx = np.arange(dir3.shape[0], dtype=np.int32)
         dir3 = np.ascontiguousarray(np.atleast_2d(dir3))
-        if dir3.ndim != 2:
+        if(dir3.ndim != 2):
             raise RuntimeError("reduce_dirvector: invalid shape of dir3 array")
 
         '''
@@ -1178,10 +1220,10 @@ class unitcell:
         '''
         eps = constants.sqrt_epsf
 
-        if np.all(np.abs(np.linalg.norm(dir3, axis=1) - 1.0) < eps):
+        if(np.all(np.abs(np.linalg.norm(dir3, axis=1) - 1.0) < eps)):
             dir3n = dir3
         else:
-            if np.all(np.linalg.norm(dir3) > eps):
+            if(np.all(np.linalg.norm(dir3) > eps)):
                 dir3n = dir3/np.tile(np.linalg.norm(dir3, axis=1), [3, 1]).T
             else:
                 raise RuntimeError(
@@ -1205,30 +1247,30 @@ class unitcell:
         ntriangle = self.sphere_sector.ntriangle[switch]
         connectivity = self.sphere_sector.connectivity[switch]
 
-        if switch == 'pg':
+        if(switch == 'pg'):
             sym = self.SYM_PG_c
 
-        elif switch == 'super':
+        elif(switch == 'super'):
             sym = self.SYM_PG_supergroup
 
-        elif switch == 'laue':
+        elif(switch == 'laue'):
             sym = self.SYM_PG_c_laue
 
-        elif switch == 'superlaue':
+        elif(switch == 'superlaue'):
             sym = self.SYM_PG_supergroup_laue
 
         for sop in sym:
 
-            if dir3_copy.size != 0:
+            if(dir3_copy.size != 0):
 
                 dir3_sym = np.dot(sop, dir3_copy.T).T
 
                 mask = np.zeros(dir3_sym.shape[0]).astype(bool)
 
-                if ntriangle == 0:
-                    if hemisphere == 'both':
+                if(ntriangle == 0):
+                    if(hemisphere == 'both'):
                         mask = np.ones(dir3_sym.shape[0], dtype=bool)
-                    elif hemisphere == 'upper':
+                    elif(hemisphere == 'upper'):
                         mask = dir3_sym[:, 2] >= 0.
                 else:
                     for ii in range(ntriangle):
@@ -1237,8 +1279,8 @@ class unitcell:
                             hemisphere, switch)
                         mask = np.logical_or(mask, tmpmask)
 
-                if np.sum(mask) > 0:
-                    if dir3_reduced.size != 0:
+                if(np.sum(mask) > 0):
+                    if(dir3_reduced.size != 0):
                         dir3_reduced = np.vstack(
                             (dir3_reduced, dir3_sym[mask, :]))
                         idx_red = np.hstack((idx_red, idx[mask]))
@@ -1274,7 +1316,7 @@ class unitcell:
            replaceing barycenter to pi-theta)
         '''
 
-        if laueswitch:
+        if(laueswitch == True):
             '''
             this is the case where we color orientations based on the laue group
             of the crystal. this is always going to be the case with x-ray which
@@ -1285,7 +1327,7 @@ class unitcell:
                 dir3, switch='superlaue')
             switch = 'superlaue'
 
-        else:
+        elif(laueswitch == False):
             '''
             follow the logic in the function description
             '''
@@ -1322,7 +1364,7 @@ class unitcell:
         '''
         first make sure that the rotation matric is size nx3x3
         '''
-        if rmats.ndim == 2:
+        if(rmats.ndim == 2):
             rmats = np.atleast_3d(rmats).T
         else:
             assert rmats.ndim == 3, "rotations matrices need to \
@@ -1363,7 +1405,7 @@ class unitcell:
         """
         lp_valunit = []
         for i in range(6):
-            if i < 3:
+            if(i < 3):
                 lp_valunit.append(
                     valWUnit('lp', 'length',  lp[i], 'nm'))
 
@@ -1420,7 +1462,7 @@ class unitcell:
         self.calcmatrices()
         self.init_max_g_index()
         self.CalcMaxGIndex()
-        if hasattr(self, 'numat'):
+        if(hasattr(self, 'numat')):
             self.CalcDensity()
 
     @property
@@ -1546,7 +1588,7 @@ class unitcell:
     def U(self, Uarr):
         self._U = Uarr
         self.aniU = False
-        if Uarr.ndim > 1:
+        if(Uarr.ndim > 1):
             self.aniU = True
             self.calcBetaij()
 
@@ -1574,9 +1616,9 @@ class unitcell:
 
     @sgnum.setter
     def sgnum(self, val):
-        if not(isinstance(val, int)):
+        if(not(isinstance(val, int))):
             raise ValueError('space group should be integer')
-        if not((val >= 1) and (val <= 230)):
+        if(not((val >= 1) and (val <= 230))):
             raise ValueError('space group number should be between 1 and 230.')
 
         self._sym_sgnum = val
@@ -1679,6 +1721,12 @@ class unitcell:
         assert(val.shape[0] ==
                self.atom_ntype), 'shape of numat is not consistent'
         self._numat = val
+
+    # different atom types; read only
+    @property
+    def Z(self):
+        sz = self.atom_ntype
+        return self.atom_type[0:atom_ntype]
 
     # direct metric tensor is read only
     @property

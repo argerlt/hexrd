@@ -20,3 +20,5 @@ class Registry(object):
         """Register adapter class"""
         if acls.__name__ != 'DistortionBase':
             cls.distortion_registry[acls.maptype] = acls
+
+    pass  # end class

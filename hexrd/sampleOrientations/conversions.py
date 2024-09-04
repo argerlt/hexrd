@@ -1,12 +1,16 @@
 import numpy as np
-from numba import njit
 from hexrd import constants
+from hexrd.utils.decorators import numba_njit_if_available
+
+if constants.USE_NUMBA:
+    from numba import prange
+else:
+    prange = range
 
 ap_2 = constants.cuA_2
 sc = constants.sc
 
-
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def getPyramid(xyz):
     x = xyz[0]
     y = xyz[1]
@@ -30,13 +34,12 @@ def getPyramid(xyz):
         return 6
 
 
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def cu2ro(cu):
     ho = cu2ho(cu)
     return ho2ro(ho)
 
-
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def cu2ho(cu):
     ma = np.max(np.abs(cu))
     assert ma <= ap_2, "point outside cubochoric grid"
@@ -87,14 +90,12 @@ def cu2ho(cu):
     elif pyd == 5 or pyd == 6:
         return np.array([LamXYZ[1], LamXYZ[2], LamXYZ[0]])
 
-
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def ho2ro(ho):
     ax = ho2ax(ho)
     return ax2ro(ax)
 
-
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def ho2ax(ho):
     hmag = np.linalg.norm(ho[:])**2
     if hmag < 1E-8:
@@ -112,8 +113,7 @@ def ho2ax(ho):
     else:
         return np.array([hn[0], hn[1], hn[2], s])
 
-
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def ax2ro(ax):
     if np.abs(ax[3]) < 1E-8:
         return np.array([0.0, 0.0, 1.0, 0.0])
@@ -124,14 +124,12 @@ def ax2ro(ax):
     else:
         return np.array([ax[0], ax[1], ax[2], np.tan(ax[3]*0.5)])
 
-
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def ro2qu(ro):
     ax = ro2ax(ro)
     return ax2qu(ax)
 
-
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def ro2ax(ro):
     if np.abs(ro[3]) < 1E-8:
         return np.array([0.0, 0.0, 1.0, 0.0])
@@ -143,7 +141,7 @@ def ro2ax(ro):
         return np.array([ro[0]*mag, ro[1]*mag, ro[2]*mag, ang])
 
 
-@njit(cache=True, nogil=True)
+@numba_njit_if_available(cache=True, nogil=True)
 def ax2qu(ro):
     if np.abs(ro[3]) < 1E-8:
         return np.array([1.0, 0.0, 0.0, 0.0])
