@@ -10,12 +10,12 @@ from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+from numba import njit
 
 from hexrd import constants as ct
 from hexrd.instrument import Detector
 from hexrd.transforms import xfcapi
 from hexrd.utils.concurrent import distribute_tasks
-from hexrd.utils.decorators import numba_njit_if_available
 
 
 class SampleLayerDistortion:
@@ -187,7 +187,7 @@ def tth_corr_sample_layer(panel, xy_pts,
                                        tvec_c=None, apply_distortion=True)
     ref_tth = ref_angs[:, 0]
 
-    dhats = xfcapi.unitRowVector(panel.cart_to_dvecs(xy_pts))
+    dhats = xfcapi.unit_vector(panel.cart_to_dvecs(xy_pts))
     cos_beta = -dhats[:, 2]
     # Invalidate values past the critical beta
     cos_beta[np.arccos(cos_beta) > critical_beta] = np.nan
@@ -199,6 +199,17 @@ def tth_corr_sample_layer(panel, xy_pts,
     else:
         # !!! NEED TO CHECK THIS
         return np.vstack([-tth_corr, ref_angs[:, 1]]).T
+
+
+def invalidate_past_critical_beta(panel: Detector, xy_pts: np.ndarray,
+                                  pinhole_thickness: float,
+                                  pinhole_radius: float) -> None:
+    """Set any xy_pts past critical beta to be nan"""
+    # Compute the critical beta angle. Anything past this is invalid.
+    critical_beta = np.arctan(2 * pinhole_radius / pinhole_thickness)
+    dhats = xfcapi.unit_vector(panel.cart_to_dvecs(xy_pts))
+    cos_beta = -dhats[:, 2]
+    xy_pts[np.arccos(cos_beta) > critical_beta] = np.nan
 
 
 def tth_corr_map_sample_layer(instrument,
@@ -246,7 +257,7 @@ def tth_corr_map_sample_layer(instrument,
         ref_ptth, _ = panel.pixel_angles()
         py, px = panel.pixel_coords
         xy_data = np.vstack((px.flatten(), py.flatten())).T
-        dhats = xfcapi.unitRowVector(panel.cart_to_dvecs(xy_data))
+        dhats = xfcapi.unit_vector(panel.cart_to_dvecs(xy_data))
         cos_beta = -dhats[:, 2]
         # Invalidate values past the critical beta
         # cos_beta[np.arccos(cos_beta) > critical_beta] = np.nan
@@ -437,8 +448,8 @@ def _infer_eHat_l(panel):
     instr_type = _infer_instrument_type(panel)
 
     eHat_l_dict = {
-        'TARDIS': -xfcapi.Xl,
-        'PXRDIP': xfcapi.Yl,
+        'TARDIS': -ct.lab_x.reshape((3, 1)),
+        'PXRDIP': ct.lab_y.reshape((3, 1))
     }
 
     return eHat_l_dict[instr_type]
@@ -510,7 +521,7 @@ def calc_tth_rygg_pinhole(panels, absorption_length, tth, eta,
     # Convert tth and eta to phi_d, beta, and r_d
     dvec_arg = np.vstack((tth.flatten(), eta.flatten(),
                           np.zeros(np.prod(eta.shape))))
-    dvectors = xfcapi.anglesToDVec(dvec_arg.T, bvec, eHat_l=eHat_l)
+    dvectors = xfcapi.angles_to_dvec(dvec_arg.T, bvec, eta_vec=eHat_l)
 
     v0 = np.array([0, 0, 1])
     v1 = np.squeeze(eHat_l)
@@ -731,7 +742,7 @@ def _compute_vi_qq_i(phi_d, sin_b, bd, sin_phii, cos_phii, alpha_i, phi_xi,
 
 
 # The numba version (works better in conjunction with multi-threading)
-_compute_vi_qq_i_numba = numba_njit_if_available(
+_compute_vi_qq_i_numba = njit(
     nogil=True, cache=True)(_compute_vi_qq_i)
 
 

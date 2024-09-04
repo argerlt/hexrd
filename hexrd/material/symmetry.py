@@ -30,14 +30,20 @@
 # Module containing functions relevant to symmetries
 
 import numpy as np
-from numpy import array, sqrt, pi, \
-     vstack, c_, dot, \
-     argmax
+from numba import njit
+from numpy import (array, sqrt, pi,
+                   vstack, c_, dot,
+                   argmax)
 
 # from hexrd.rotations import quatOfAngleAxis, quatProductMatrix, fixQuat
 from hexrd import rotations as rot
 from hexrd import constants
-from hexrd.utils.decorators import memoize, numba_njit_if_available
+from hexrd.utils.decorators import memoize
+
+# Imports in case others are importing from here
+from hexrd.rotations import (toFundamentalRegion,
+                             ltypeOfLaueGroup,
+                             quatOfLaueGroup)
 
 
 # =============================================================================
@@ -57,293 +63,6 @@ piby6 = pi/6.
 # =============================================================================
 
 
-def toFundamentalRegion(q, crysSym='Oh', sampSym=None):
-    """
-    """
-    qdims = q.ndim
-    if qdims == 3:
-        l3, m3, n3 = q.shape
-        assert m3 == 4, 'your 3-d quaternion array isn\'t the right shape'
-        q = q.transpose(0, 2, 1).reshape(l3*n3, 4).T
-    if isinstance(crysSym, str):
-        qsym_c = rot.quatProductMatrix(
-            quatOfLaueGroup(crysSym), 'right'
-        )  # crystal symmetry operator
-    else:
-        qsym_c = rot.quatProductMatrix(crysSym, 'right')
-
-    n = q.shape[1]              # total number of quats
-    m = qsym_c.shape[0]         # number of symmetry operations
-
-    #
-    # MAKE EQUIVALENCE CLASS
-    #
-    # Do R * Gc, store as
-    # [q[:, 0] * Gc[:, 0:m], ..., 2[:, n-1] * Gc[:, 0:m]]
-    qeqv = dot(qsym_c, q).transpose(2, 0, 1).reshape(m*n, 4).T
-
-    if sampSym is None:
-        # need to fix quats to sort
-        qeqv = rot.fixQuat(qeqv)
-
-        # Reshape scalar comp columnwise by point in qeqv
-        q0 = qeqv[0, :].reshape(n, m).T
-
-        # Find q0 closest to origin for each n equivalence classes
-        q0maxColInd = argmax(q0, 0) + [x*m for x in range(n)]
-
-        # store representatives in qr
-        qr = qeqv[:, q0maxColInd]
-    else:
-        if isinstance(sampSym, str):
-            qsym_s = rot.quatProductMatrix(
-                quatOfLaueGroup(sampSym), 'left'
-            )  # sample symmetry operator
-        else:
-            qsym_s = rot.quatProductMatrix(sampSym, 'left')
-
-        p = qsym_s.shape[0]         # number of sample symmetry operations
-
-        # Do Gs * (R * Gc), store as
-        # [Gs[:, 0:p] * q[:,   0] * Gc[:, 0], ... , Gs[:, 0:p] * q[:,   0] * Gc[:, m-1], ...
-        #  Gs[:, 0:p] * q[:, n-1] * Gc[:, 0], ... , Gs[:, 0:p] * q[:, n-1] * Gc[:, m-1]]
-        qeqv = rot.fixQuat(
-            dot(qsym_s, qeqv).transpose(2, 0, 1).reshape(p*m*n, 4).T
-        )
-
-        raise NotImplementedError
-
-    # debug
-    assert qr.shape[1] == n, 'oops, something wrong here with your reshaping'
-
-    if qdims == 3:
-        qr = qr.T.reshape(l3, n3, 4).transpose(0, 2, 1)
-
-    return qr
-
-
-def ltypeOfLaueGroup(tag):
-    """
-    See quatOfLaueGroup
-    """
-
-    if not isinstance(tag, str):
-        raise RuntimeError("entered flag is not a string!")
-
-    if tag.lower() == 'ci' or tag.lower() == 's2':
-        ltype = 'triclinic'
-    elif tag.lower() == 'c2h':
-        ltype = 'monoclinic'
-    elif tag.lower() == 'd2h' or tag.lower() == 'vh':
-        ltype = 'orthorhombic'
-    elif tag.lower() == 'c4h' or tag.lower() == 'd4h':
-        ltype = 'tetragonal'
-    elif tag.lower() == 'c3i' or tag.lower() == 's6' or tag.lower() == 'd3d':
-        ltype = 'trigonal'
-    elif tag.lower() == 'c6h' or tag.lower() == 'd6h':
-        ltype = 'hexagonal'
-    elif tag.lower() == 'th' or tag.lower() == 'oh':
-        ltype = 'cubic'
-    else:
-        raise RuntimeError(
-            "unrecognized symmetry group.  "
-            + "See ''help(quatOfLaueGroup)'' for a list of valid options.  "
-            + "Oh, and have a great day ;-)"
-        )
-
-    return ltype
-
-
-def quatOfLaueGroup(tag):
-    """
-    Generate quaternion representation for the specified Laue group.
-
-    USAGE:
-
-         qsym = quatOfLaueGroup(schoenfliesTag)
-
-    INPUTS:
-
-         1) schoenfliesTag 1 x 1, a case-insensitive string representing the
-         Schoenflies symbol for the desired Laue group.  The 14 available
-         choices are:
-
-              Class           Symbol      n
-             -------------------------------
-              Triclinic       Ci (S2)     1
-              Monoclinic      C2h         2
-              Orthorhombic    D2h (Vh)    4
-              Tetragonal      C4h         4
-                              D4h         8
-              Trigonal        C3i (S6)    3
-                              D3d         6
-              Hexagonal       C6h         6
-                              D6h         12
-              Cubic           Th          12
-                              Oh          24
-
-    OUTPUTS:
-
-         1) qsym is (4, n) the quaterions associated with each element of the
-         chosen symmetry group having n elements (dep. on group -- see INPUTS
-         list above).
-
-    NOTES:
-
-         *) The conventions used for assigning a RHON basis, {x1, x2, x3}, to
-         each point group are consistent with those published in Appendix B
-         of [1].
-
-    REFERENCES:
-
-         [1] Nye, J. F., ``Physical Properties of Crystals: Their
-         Representation by Tensors and Matrices'', Oxford University Press,
-         1985. ISBN 0198511655
-    """
-
-    if not isinstance(tag, str):
-        raise RuntimeError("entered flag is not a string!")
-
-    if tag.lower() == 'ci' or tag.lower() == 's2':
-        # TRICLINIC
-        angleAxis = vstack([0., 1., 0., 0.])  # identity
-    elif tag.lower() == 'c2h':
-        # MONOCLINIC
-        angleAxis = c_[
-            [0.,   1,   0,   0],  # identity
-            [pi,   0,   1,   0],  # twofold about 010 (x2)
-            ]
-    elif tag.lower() == 'd2h' or tag.lower() == 'vh':
-        # ORTHORHOMBIC
-        angleAxis = c_[
-            [0.,   1,   0,   0],  # identity
-            [pi,   1,   0,   0],  # twofold about 100
-            [pi,   0,   1,   0],  # twofold about 010
-            [pi,   0,   0,   1],  # twofold about 001
-            ]
-    elif tag.lower() == 'c4h':
-        # TETRAGONAL (LOW)
-        angleAxis = c_[
-            [0.0,       1,    0,    0],  # identity
-            [piby2,     0,    0,    1],  # fourfold about 001 (x3)
-            [pi,        0,    0,    1],  #
-            [piby2*3,   0,    0,    1],  #
-            ]
-    elif tag.lower() == 'd4h':
-        # TETRAGONAL (HIGH)
-        angleAxis = c_[
-            [0.0,       1,    0,    0],  # identity
-            [piby2,     0,    0,    1],  # fourfold about 0  0  1 (x3)
-            [pi,        0,    0,    1],  #
-            [piby2*3,   0,    0,    1],  #
-            [pi,        1,    0,    0],  # twofold about  1  0  0 (x1)
-            [pi,        0,    1,    0],  # twofold about  0  1  0 (x2)
-            [pi,        1,    1,    0],  # twofold about  1  1  0
-            [pi,       -1,    1,    0],  # twofold about -1  1  0
-            ]
-    elif tag.lower() == 'c3i' or tag.lower() == 's6':
-        # TRIGONAL (LOW)
-        angleAxis = c_[
-            [0.0,       1,    0,    0],  # identity
-            [piby3*2,   0,    0,    1],  # threefold about 0001 (x3,c)
-            [piby3*4,   0,    0,    1],  #
-            ]
-    elif tag.lower() == 'd3d':
-        # TRIGONAL (HIGH)
-        angleAxis = c_[
-            [0.0,       1,     0,    0],  # identity
-            [piby3*2,   0,     0,    1],  # threefold about 0001 (x3,c)
-            [piby3*4,   0,     0,    1],  #
-            [pi,        1,     0,    0],  # twofold about  2 -1 -1  0 (x1,a1)
-            [pi,       -0.5,   sq3by2,  0],  # twofold about -1  2 -1  0 (a2)
-            [pi,       -0.5,  -sq3by2,  0],  # twofold about -1 -1  2  0 (a3)
-            ]
-    elif tag.lower() == 'c6h':
-        # HEXAGONAL (LOW)
-        angleAxis = c_[
-            [0.0,       1,     0,    0],  # identity
-            [piby3,     0,     0,    1],  # sixfold about 0001 (x3,c)
-            [piby3*2,   0,     0,    1],  #
-            [pi,        0,     0,    1],  #
-            [piby3*4,   0,     0,    1],  #
-            [piby3*5,   0,     0,    1],  #
-            ]
-    elif tag.lower() == 'd6h':
-        # HEXAGONAL (HIGH)
-        angleAxis = c_[
-            [0.0,       1,       0,       0],  # identity
-            [piby3,     0,       0,       1],  # sixfold about  0  0  1 (x3,c)
-            [piby3*2,   0,       0,       1],  #
-            [pi,        0,       0,       1],  #
-            [piby3*4,   0,       0,       1],  #
-            [piby3*5,   0,       0,       1],  #
-            [pi,        1,       0,       0],  # twofold about  2 -1  0 (x1,a1)
-            [pi,       -0.5,     sq3by2,  0],  # twofold about -1  2  0 (a2)
-            [pi,       -0.5,    -sq3by2,  0],  # twofold about -1 -1  0 (a3)
-            [pi,        sq3by2,  0.5,     0],  # twofold about  1  0  0
-            [pi,        0,       1,       0],  # twofold about -1  1  0 (x2)
-            [pi,       -sq3by2,  0.5,     0],  # twofold about  0 -1  0
-            ]
-    elif tag.lower() == 'th':
-        # CUBIC (LOW)
-        angleAxis = c_[
-            [0.0,       1,    0,    0],  # identity
-            [pi,        1,    0,    0],  # twofold about    1  0  0 (x1)
-            [pi,        0,    1,    0],  # twofold about    0  1  0 (x2)
-            [pi,        0,    0,    1],  # twofold about    0  0  1 (x3)
-            [piby3*2,   1,    1,    1],  # threefold about  1  1  1
-            [piby3*4,   1,    1,    1],  #
-            [piby3*2,  -1,    1,    1],  # threefold about -1  1  1
-            [piby3*4,  -1,    1,    1],  #
-            [piby3*2,  -1,   -1,    1],  # threefold about -1 -1  1
-            [piby3*4,  -1,   -1,    1],  #
-            [piby3*2,   1,   -1,    1],  # threefold about  1 -1  1
-            [piby3*4,   1,   -1,    1],  #
-            ]
-    elif tag.lower() == 'oh':
-        # CUBIC (HIGH)
-        angleAxis = c_[
-            [0.0,       1,    0,    0],  # identity
-            [piby2,     1,    0,    0],  # fourfold about   1  0  0 (x1)
-            [pi,        1,    0,    0],  #
-            [piby2*3,   1,    0,    0],  #
-            [piby2,     0,    1,    0],  # fourfold about   0  1  0 (x2)
-            [pi,        0,    1,    0],  #
-            [piby2*3,   0,    1,    0],  #
-            [piby2,     0,    0,    1],  # fourfold about   0  0  1 (x3)
-            [pi,        0,    0,    1],  #
-            [piby2*3,   0,    0,    1],  #
-            [piby3*2,   1,    1,    1],  # threefold about  1  1  1
-            [piby3*4,   1,    1,    1],  #
-            [piby3*2,  -1,    1,    1],  # threefold about -1  1  1
-            [piby3*4,  -1,    1,    1],  #
-            [piby3*2,  -1,   -1,    1],  # threefold about -1 -1  1
-            [piby3*4,  -1,   -1,    1],  #
-            [piby3*2,   1,   -1,    1],  # threefold about  1 -1  1
-            [piby3*4,   1,   -1,    1],  #
-            [pi,        1,    1,    0],  # twofold about    1  1  0
-            [pi,       -1,    1,    0],  # twofold about   -1  1  0
-            [pi,        1,    0,    1],  # twofold about    1  0  1
-            [pi,        0,    1,    1],  # twofold about    0  1  1
-            [pi,       -1,    0,    1],  # twofold about   -1  0  1
-            [pi,        0,   -1,    1],  # twofold about    0 -1  1
-            ]
-    else:
-        raise RuntimeError(
-            "unrecognized symmetry group.  "
-            + "See ``help(quatOfLaueGroup)'' for a list of valid options.  "
-            + "Oh, and have a great day ;-)"
-        )
-
-    angle = angleAxis[0, ]
-    axis = angleAxis[1:, ]
-
-    #  Note: Axis does not need to be normalized in call to quatOfAngleAxis
-    #  05/01/2014 JVB -- made output a contiguous C-ordered array
-    qsym = array(rot.quatOfAngleAxis(angle, axis).T, order='C').T
-
-    return qsym
-
 def GeneratorString(sgnum):
     '''
     these rhombohedral space groups have a hexagonal setting
@@ -359,6 +78,7 @@ def GeneratorString(sgnum):
     #     sg = sgdict[sgnum]-1
 
     return constants.SYM_GL[sg]
+
 
 def MakeGenerators(genstr, setting):
 
@@ -380,7 +100,7 @@ def MakeGenerators(genstr, setting):
     if(n > 0):
         for i in range(n):
             istart = 2 + i * 4
-            istop  = 2 + (i+1) * 4
+            istop = 2 + (i+1) * 4
 
             t = genstr[istart:istop]
 
@@ -395,32 +115,39 @@ def MakeGenerators(genstr, setting):
     if(genstr[istop] != '0'):
         if(setting != 0):
             t = genstr[istop+1:istop+4]
-            trans = np.array([constants.SYM_GENERATORS[t[0]],\
-                              constants.SYM_GENERATORS[t[1]],\
-                              constants.SYM_GENERATORS[t[2]]
-                              ])
-            for i in range(genmat.shape[0]):
-                genmat[i,0:3,3] -= trans
+            t = 'a' + t  # get the translation without any rotation
+            sym = np.squeeze(SYM_fillgen(t, sgn=-1))
+            sym2 = np.squeeze(SYM_fillgen(t))
+            for i in range(1, genmat.shape[0]):
+                generator = np.dot(sym2, np.dot(
+                    np.squeeze(genmat[i, :, :]),
+                    sym))
+                frac = np.modf(generator[0:3, 3])[0]
+                frac[frac < 0.] += 1.
+                frac[np.abs(frac) < 1E-5] = 0.0
+                frac[np.abs(frac-1.0) < 1E-5] = 0.0
+                generator[0:3, 3] = frac
+                genmat[i, :, :] = generator
 
     return genmat, centrosymmetric
 
-def SYM_fillgen(t):
-    mat = np.zeros([4,4])
-    mat[3,3] = 1.
 
-    mat[0:3,0:3] = constants.SYM_GENERATORS[t[0]]
-    mat[0:3,3] = np.array([constants.SYM_GENERATORS[t[1]],\
-                           constants.SYM_GENERATORS[t[2]],\
-                           constants.SYM_GENERATORS[t[3]]
-                           ])
+def SYM_fillgen(t, sgn=1):
+    mat = np.zeros([4, 4])
+    mat[3, 3] = 1.
 
-    mat = np.broadcast_to(mat, [1,4,4])
+    mat[0:3, 0:3] = constants.SYM_GENERATORS[t[0]]
+    mat[0:3, 3] = sgn*np.array([constants.SYM_GENERATORS[t[1]],
+                                constants.SYM_GENERATORS[t[2]],
+                                constants.SYM_GENERATORS[t[3]]
+                                ])
+
+    mat = np.broadcast_to(mat, [1, 4, 4])
     return mat
 
 
 @memoize(maxsize=20)
 def GenerateSGSym(sgnum, setting=0):
-
     '''
     get the generators for a space group using the
     generator string
@@ -447,22 +174,22 @@ def GenerateSGSym(sgnum, setting=0):
     k1 = 0
     while k1 < nsym:
 
-        g1 = np.squeeze(SYM_SG[k1,:,:])
+        g1 = np.squeeze(SYM_SG[k1, :, :])
         k2 = k1
 
         while k2 < nsym:
-            g2 = np.squeeze(SYM_SG[k2,:,:])
+            g2 = np.squeeze(SYM_SG[k2, :, :])
             gnew = np.dot(g1, g2)
 
             # only fractional parts
-            frac = np.modf(gnew[0:3,3])[0]
+            frac = np.modf(gnew[0:3, 3])[0]
             frac[frac < 0.] += 1.
             frac[np.abs(frac) < 1E-5] = 0.0
             frac[np.abs(frac-1.0) < 1E-5] = 0.0
-            gnew[0:3,3] = frac
+            gnew[0:3, 3] = frac
 
             if(isnew(gnew, SYM_SG)):
-                gnew = np.broadcast_to(gnew, [1,4,4])
+                gnew = np.broadcast_to(gnew, [1, 4, 4])
                 SYM_SG = np.concatenate((SYM_SG, gnew))
                 nsym += 1
 
@@ -477,11 +204,11 @@ def GenerateSGSym(sgnum, setting=0):
     SYM_PG_d_laue = GeneratePGSym_Laue(SYM_PG_d)
 
     for s in SYM_PG_d:
-        if(np.allclose(-np.eye(3),s)):
+        if(np.allclose(-np.eye(3), s)):
             centrosymmetric = True
 
-
     return SYM_SG, SYM_PG_d, SYM_PG_d_laue, centrosymmetric, symmorphic
+
 
 def GeneratePGSym(SYM_SG):
     '''
@@ -496,18 +223,19 @@ def GeneratePGSym(SYM_SG):
     nsgsym = SYM_SG.shape[0]
 
     # first fill the identity rotation
-    SYM_PG_d = SYM_SG[0,0:3,0:3]
-    SYM_PG_d = np.broadcast_to(SYM_PG_d,[1,3,3])
+    SYM_PG_d = SYM_SG[0, 0:3, 0:3]
+    SYM_PG_d = np.broadcast_to(SYM_PG_d, [1, 3, 3])
 
-    for i in range(1,nsgsym):
-        g = SYM_SG[i,:,:]
-        t = g[0:3,3]
-        g = g[0:3,0:3]
-        if(isnew(g,SYM_PG_d)):
-            g = np.broadcast_to(g,[1,3,3])
+    for i in range(1, nsgsym):
+        g = SYM_SG[i, :, :]
+        t = g[0:3, 3]
+        g = g[0:3, 0:3]
+        if(isnew(g, SYM_PG_d)):
+            g = np.broadcast_to(g, [1, 3, 3])
             SYM_PG_d = np.concatenate((SYM_PG_d, g))
 
     return SYM_PG_d.astype(np.int32)
+
 
 def GeneratePGSym_Laue(SYM_PG_d):
     '''
@@ -522,7 +250,7 @@ def GeneratePGSym_Laue(SYM_PG_d):
     first check if the group already has the inversion symmetry
     '''
     for s in SYM_PG_d:
-        if(np.allclose(s,-np.eye(3))):
+        if(np.allclose(s, -np.eye(3))):
             return SYM_PG_d
 
     '''
@@ -530,7 +258,7 @@ def GeneratePGSym_Laue(SYM_PG_d):
     add the inversion symmetry
     '''
     SYM_PG_d_laue = SYM_PG_d
-    g = np.broadcast_to(-np.eye(3).astype(np.int32),[1,3,3])
+    g = np.broadcast_to(-np.eye(3).astype(np.int32), [1, 3, 3])
     SYM_PG_d_laue = np.concatenate((SYM_PG_d_laue, g))
 
     '''
@@ -540,14 +268,14 @@ def GeneratePGSym_Laue(SYM_PG_d):
     nsym = SYM_PG_d_laue.shape[0]
     k1 = 0
     while k1 < nsym:
-        g1 = np.squeeze(SYM_PG_d_laue[k1,:,:])
+        g1 = np.squeeze(SYM_PG_d_laue[k1, :, :])
         k2 = k1
         while k2 < nsym:
-            g2 = np.squeeze(SYM_PG_d_laue[k2,:,:])
+            g2 = np.squeeze(SYM_PG_d_laue[k2, :, :])
             gnew = np.dot(g1, g2)
 
             if(isnew(gnew, SYM_PG_d_laue)):
-                gnew = np.broadcast_to(gnew, [1,3,3])
+                gnew = np.broadcast_to(gnew, [1, 3, 3])
                 SYM_PG_d_laue = np.concatenate((SYM_PG_d_laue, gnew))
                 nsym += 1
 
@@ -561,13 +289,14 @@ def GeneratePGSym_Laue(SYM_PG_d):
     return SYM_PG_d_laue
 
 
-@numba_njit_if_available(cache=True, nogil=True)
+@njit(cache=True, nogil=True)
 def isnew(mat, sym_mats):
     for g in sym_mats:
         diff = np.sum(np.abs(mat - g))
         if diff < 1e-5:
             return False
     return True
+
 
 def latticeType(sgnum):
 
@@ -583,7 +312,7 @@ def latticeType(sgnum):
         return 'trigonal'
     elif(sgnum > 167 and sgnum <= 194):
         return 'hexagonal'
-    elif(sgnum > 194 and sgnum <=230):
+    elif(sgnum > 194 and sgnum <= 230):
         return 'cubic'
     else:
         raise RuntimeError('symmetry.latticeType: unknown space group number')
@@ -597,13 +326,14 @@ def MakeGenerators_PGSYM(pggenstr):
              for any point group. this is needed for the coloring routines
     '''
     ngen = int(pggenstr[0])
-    SYM_GEN_PG = np.zeros([ngen,3,3])
+    SYM_GEN_PG = np.zeros([ngen, 3, 3])
 
     for i in range(ngen):
         s = pggenstr[i+1]
-        SYM_GEN_PG[i,:,:] = constants.SYM_GENERATORS[s]
+        SYM_GEN_PG[i, :, :] = constants.SYM_GENERATORS[s]
 
     return SYM_GEN_PG
+
 
 def GeneratePGSYM(pgsym):
     '''
@@ -619,7 +349,6 @@ def GeneratePGSYM(pgsym):
     generate the powers of the group
     '''
 
-
     '''
     now go through the group actions and see if its a new matrix
     if it is then add it to the group
@@ -627,14 +356,14 @@ def GeneratePGSYM(pgsym):
     nsym = SYM_GEN_PG.shape[0]
     k1 = 0
     while k1 < nsym:
-        g1 = np.squeeze(SYM_GEN_PG[k1,:,:])
+        g1 = np.squeeze(SYM_GEN_PG[k1, :, :])
         k2 = k1
         while k2 < nsym:
-            g2 = np.squeeze(SYM_GEN_PG[k2,:,:])
+            g2 = np.squeeze(SYM_GEN_PG[k2, :, :])
             gnew = np.dot(g1, g2)
 
             if(isnew(gnew, SYM_GEN_PG)):
-                gnew = np.broadcast_to(gnew, [1,3,3])
+                gnew = np.broadcast_to(gnew, [1, 3, 3])
                 SYM_GEN_PG = np.concatenate((SYM_GEN_PG, gnew))
                 nsym += 1
 
