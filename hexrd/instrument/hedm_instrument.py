@@ -42,8 +42,6 @@ import yaml
 
 import h5py
 
-import lmfit
-
 import numpy as np
 
 from io import IOBase
@@ -70,16 +68,11 @@ from hexrd.transforms.xfcapi import (
 from hexrd import xrdutil
 from hexrd.material.crystallography import PlaneData
 from hexrd import constants as ct
-from hexrd.rotations import (
-    angleAxisOfRotMat,
-    RotMatEuler,
-    make_rmat_euler,
-    expMapOfQuat,
-    quatOfRotMat
-    )
+from hexrd.rotations import angleAxisOfRotMat, RotMatEuler
 from hexrd import distortion as distortion_pkg
 from hexrd.utils.compatibility import h5py_read_string
 from hexrd.utils.concurrent import distribute_tasks
+from hexrd.utils.hdf5 import unwrap_dict_to_h5, unwrap_h5_to_dict
 from hexrd.utils.yaml import NumpyToNativeDumper
 from hexrd.valunits import valWUnit
 from hexrd.wppf import LeBail
@@ -830,6 +823,14 @@ class HEDMInstrument(object):
         return ct.keVToAngstrom(self.beam_energy)
 
     @property
+    def has_multi_beam(self):
+        return bool(self.multi_beam_dict)
+
+    @property
+    def multi_beam_dict(self):
+        return {}
+
+    @property
     def beam_vector(self):
         return self._beam_vector
 
@@ -938,6 +939,34 @@ class HEDMInstrument(object):
         ).flatten()
         self._calibration_parameters = calibration_parameters
         return self._calibration_parameters
+
+    @property
+    def calibration_flags_to_lmfit_names(self):
+        # Create a list identical in length to `self.calibration_flags`
+        # where the entries in the list are the corresponding lmfit
+        # parameter names.
+        flags = [
+            'beam_energy',
+            'beam_azimuth',
+            'beam_polar',
+            'instr_chi',
+            'instr_tvec_x',
+            'instr_tvec_y',
+            'instr_tvec_z',
+        ]
+
+        for panel in self.detectors.values():
+            flags += panel.calibration_flags_to_lmfit_names
+
+        return flags
+
+    def set_calibration_flags_to_lmfit_params(self, params_dict):
+        # Take the refinement flags from the old `self.calibration_flags`
+        # style of flags and set them to the provided lmfit params dict.
+        flags = self.calibration_flags
+        for i, name in enumerate(self.calibration_flags_to_lmfit_names):
+            if name in params_dict:
+                params_dict[name].vary = flags[i]
 
     @property
     def calibration_flags(self):
@@ -1081,70 +1110,6 @@ class HEDMInstrument(object):
                         )
                 ii += dpnp
         return
-
-    def update_from_lmfit_parameter_list(self, params):
-        """
-        this function updates the instrument from the
-        lmfit parameter list. we don't have to keep track
-        of the position numbers as the variables are named
-        variables. this will become the standard in the
-        future since bound constraints can be very easily
-        implemented.
-        """
-        if not isinstance(params, lmfit.Parameters):
-            msg = ('Only lmfit.Parameters is acceptable input. '
-                   f'Received: {params}')
-            raise NotImplementedError(msg)
-
-        self.beam_energy = params['beam_energy'].value
-
-        azim = params['beam_azimuth'].value
-        pola = params['beam_polar'].value
-        self.beam_vector = calc_beam_vec(azim, pola)
-
-        chi = np.radians(params['instr_chi'].value)
-        self.chi = chi
-
-        instr_tvec = [params['instr_tvec_x'].value,
-                      params['instr_tvec_y'].value,
-                      params['instr_tvec_z'].value]
-        self.tvec = np.r_[instr_tvec]
-
-        for det_name, detector in self.detectors.items():
-            det = det_name.replace('-', '_')
-            euler = np.r_[params[f'{det}_euler_z'].value,
-                          params[f'{det}_euler_xp'].value,
-                          params[f'{det}_euler_zpp'].value]
-
-            rmat = make_rmat_euler(np.radians(euler),
-                                   'zxz',
-                                   extrinsic=False)
-            tilt = expMapOfQuat(quatOfRotMat(rmat))
-            detector.tilt = tilt
-
-            tvec = np.r_[params[f'{det}_tvec_x'].value,
-                         params[f'{det}_tvec_y'].value,
-                         params[f'{det}_tvec_z'].value]
-            detector.tvec = tvec
-            if detector.detector_type.lower() == 'cylindrical':
-                rad = params[f'{det}_radius'].value
-                detector.radius = rad
-
-            distortion_str = f'{det}_distortion_param'
-            if any(distortion_str in p for p in params):
-                if detector.distortion is None:
-                    raise RuntimeError(f"distortion discrepancy for '{det}'!")
-                else:
-                    names = np.sort([p for p in params if distortion_str in p])
-                    distortion = np.r_[[params[n].value for n in names]]
-                    try:
-                        detector.distortion.params = distortion
-                    except AssertionError:
-                        raise RuntimeError(
-                            f"distortion for '{det}' "
-                            f"expects {len(detector.distortion.params)} "
-                            f"params but got {len(distortion)}"
-                        )
 
     def extract_polar_maps(self, plane_data, imgser_dict,
                            active_hkls=None, threshold=None,
@@ -2389,87 +2354,6 @@ class GrainDataWriter_h5(object):
                                 compression="gzip", compression_opts=gzip,
                                 shuffle=shuffle_data)
         return
-
-
-def unwrap_dict_to_h5(grp, d, asattr=False):
-    """
-    Unwraps a dictionary to an HDF5 file of the same structure.
-
-    Parameters
-    ----------
-    grp : HDF5 group object
-        The HDF5 group to recursively unwrap the dict into.
-    d : dict
-        Input dict (of dicts).
-    asattr : bool, optional
-        Flag to write end member in dictionary tree to an attribute. If False,
-        if writes the object to a dataset using numpy.  The default is False.
-
-    Returns
-    -------
-    None.
-
-    """
-    while len(d) > 0:
-        key, item = d.popitem()
-        if isinstance(item, dict):
-            subgrp = grp.create_group(key)
-            unwrap_dict_to_h5(subgrp, item, asattr=asattr)
-        else:
-            if asattr:
-                try:
-                    grp.attrs.create(key, item)
-                except TypeError:
-                    if item is None:
-                        continue
-                    else:
-                        raise
-            else:
-                try:
-                    grp.create_dataset(key, data=np.atleast_1d(item))
-                except TypeError:
-                    if item is None:
-                        continue
-                    else:
-                        # probably a string badness
-                        grp.create_dataset(key, data=item)
-
-
-def unwrap_h5_to_dict(f, d):
-    """
-    Unwraps a simple HDF5 file to a dictionary of the same structure.
-
-    Parameters
-    ----------
-    f : HDF5 file (mode r)
-        The input HDF5 file object.
-    d : dict
-        dictionary object to update.
-
-    Returns
-    -------
-    None.
-
-    Notes
-    -----
-    As written, ignores attributes and uses numpy to cast HDF5 datasets to
-    dict entries.  Checks for 'O' type arrays and casts to strings; also
-    converts single-element arrays to scalars.
-    """
-    for key, val in f.items():
-        try:
-            d[key] = {}
-            unwrap_h5_to_dict(val, d[key])
-        except AttributeError:
-            # reached a dataset
-            if np.dtype(val) == 'O':
-                d[key] = h5py_read_string(val)
-            else:
-                tmp = np.array(val)
-                if tmp.ndim == 1 and len(tmp) == 1:
-                    d[key] = tmp[0]
-                else:
-                    d[key] = tmp
 
 
 class GenerateEtaOmeMaps(object):

@@ -2,7 +2,7 @@
 cd /github/workspace/
 
 # Install dependencies
-yum install -y wget git centos-release-scl
+yum install -y wget git centos-release-scl ca-certificates
 
 # Need to install packages that depend on centos-release-scl on a different line.
 # This will use gcc==10, which is the same as what manylinux2014 uses.
@@ -15,6 +15,9 @@ source /opt/rh/devtoolset-10/enable
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 chmod a+x Miniconda3-latest-Linux-x86_64.sh
 ./Miniconda3-latest-Linux-x86_64.sh -b
+
+# The base needs to have the same python version (3.11, right now)
+${HOME}/miniconda3/bin/conda install python=3.11 -y
 
 # Set up the hexrd channel
 ${HOME}/miniconda3/bin/conda create --override-channels -c conda-forge -y -n hexrd python=3.11
